@@ -900,12 +900,13 @@ if(typeof horses!=='undefined'&&horses.length)drfPPRender(horses.filter(h=>key(h
    Reads profiles + chart results from, and writes autosaves + journal to, the Horse_Racing folder in Google Drive. */
 (function(){
 'use strict';
-const ROOT_ID='1HKmg0w2PwQ1S1j3neesm1eWc6_Go93PB';           // Horse_Racing folder in My Drive
+const ROOT_ID='1HKmg0w2PwQ1S1j3neesm1eWc6_Go93PB';           // default: Horse_Racing folder in My Drive
 const SCOPE='https://www.googleapis.com/auth/drive';
 const API='https://www.googleapis.com/drive/v3',UP='https://www.googleapis.com/upload/drive/v3';
 const F_PROFILES='04_Track_Profiles',F_SESSIONS='05_Sessions',F_JOURNAL='06_Results_ Journal';
 const LS=k=>{try{return localStorage.getItem(k);}catch{return null;}},LSS=(k,v)=>{try{localStorage.setItem(k,v);}catch{}};
 const $d=id=>document.getElementById(id);
+let rootId=LS('trackAttack.drive.root')||ROOT_ID;
 let clientId=window.RA_GOOGLE_CLIENT_ID||LS('trackAttack.drive.clientId')||'';
 let token=null,tokenExp=0,tokClient=null,gisLoading=null;
 let wantOn=LS('trackAttack.drive.on')==='1';
@@ -967,7 +968,7 @@ async function writeText(folderId,name,body,mime){
  const r=await(await dfetch(url,{method:existing?'PATCH':'POST',headers:{'Content-Type':'multipart/related; boundary='+boundary},body:payload})).json();
  idCache.set(folderId+'/'+name,{id:r.id,name});return r;
 }
-const sub=name=>ensureFolder(ROOT_ID,name);
+const sub=name=>ensureFolder(rootId,name);
 
 /* ---------- what syncs ---------- */
 async function pullInputs(force){
@@ -1028,6 +1029,7 @@ function status(){
  for(const id of ['raDriveOpen','raDriveSave','raDrivePull','raDriveRestore'])$d(id).disabled=!conn||busy;
  if(!conn&&$d('raDriveBrowser')&&!$d('raDriveBrowser').hidden)$d('raDriveBrowser').hidden=true;
  $d('raDriveIdRow').hidden=!!clientId&&wantOn;
+ $d('raDriveRootRow').hidden=!(conn&&roots.length>1);
 }
 async function run(label,fn){
  if(busy)return;busy=true;note=label+'…';status();
@@ -1039,8 +1041,10 @@ async function connect(){
  if(!clientId){note='Paste your Google client ID first.';status();return;}
  busy=true;note='Signing in…';status();
  try{await signIn(true);wantOn=true;LSS('trackAttack.drive.on','1');LSS('trackAttack.drive.granted','1');
+  note='Finding your Horse_Racing folder…';status();
+  let rootErr='';try{await refreshRoots(true);}catch(e){rootErr=' (Could not look for the synced PC folder: '+e.message+')';}
   note='Reading profiles and results…';status();
-  const o=await pullInputs(false);note=o.length?o.join('; ')+'.':'Up to date.';}
+  const o=await pullInputs(false);note=(o.length?o.join('; ')+'.':'Up to date.')+rootErr;}
  catch(e){note='⚠ '+e.message;}
  busy=false;status();
 }
@@ -1050,11 +1054,15 @@ function install(){
  host.innerHTML=`<h3>Google Drive</h3>
   <p id="raDriveStatus" class="small" role="status"></p>
   <div class="toolbar"><button id="raDriveConnect">Connect Google Drive</button><button id="raDriveOpen" class="primary" hidden>Open race file from Drive</button><button id="raDriveSave" hidden>Save to Drive now</button><button id="raDrivePull" hidden>Load profiles &amp; results from Drive</button><button id="raDriveRestore" hidden>Restore latest autosave from Drive</button><button id="raDriveOff" hidden>Disconnect</button></div>
+  <div id="raDriveRootRow" class="small" hidden><label>Drive folder <select id="raDriveRoot"></select></label> <span id="raDriveRootNote"></span></div>
   <div id="raDriveBrowser" hidden style="margin:8px 0;padding:8px;border:1px solid #8886;border-radius:6px"></div>
   <div id="raDriveIdRow" class="small"><label>Google client ID <input id="raDriveClientId" type="text" size="48" placeholder="123456789-abc….apps.googleusercontent.com" autocomplete="off" spellcheck="false"></label></div>`;
  const bar=$d('raBar');(bar?bar.after(host):document.querySelector('main').prepend(host));
  $d('raDriveClientId').value=clientId;
  $d('raDriveConnect').onclick=connect;
+ $d('raDriveRoot').onchange=()=>{rootId=$d('raDriveRoot').value;LSS('trackAttack.drive.root',rootId);
+  for(const k of Object.keys(localStorage||{}))if(k.startsWith('trackAttack.drive.m.'))try{localStorage.removeItem(k);}catch{}
+  run('Switching folder',async()=>{const o=await pullInputs(true);return 'Now using: '+rootLabel()+'. '+o.join('; ')+'.';});};
  $d('raDriveOpen').onclick=()=>{const b=$d('raDriveBrowser');if(!b.hidden){b.hidden=true;return;}b.hidden=false;brReset();};
  $d('raDriveSave').onclick=()=>run('Saving',async()=>{await saveSession();await saveJournal();return 'Saved to Drive.';});
  $d('raDrivePull').onclick=()=>run('Loading',async()=>{const o=await pullInputs(true);return o.join('; ')+'.';});
@@ -1076,12 +1084,39 @@ document.addEventListener('visibilitychange',()=>{
  if(document.visibilityState!=='visible'||!wantOn||busy)return;
  if(haveToken())run('Checking Drive',async()=>{const o=await pullInputs(false);return o.length?o.join('; ')+'.':'';});
 });
+/* ---------- which Horse_Racing folder to use (My Drive copy or the synced PC copy) ---------- */
+let roots=[];
+const rootLabel=()=>{const r=roots.find(x=>x.id===rootId);return r?r.where:'Horse_Racing';};
+async function refreshRoots(autopick){
+ const q=`name='Horse_Racing' and mimeType='application/vnd.google-apps.folder' and trashed=false`;
+ const r=await(await dfetch(`${API}/files?q=${encodeURIComponent(q)}&fields=${encodeURIComponent('files(id,name,parents)')}&pageSize=20`)).json();
+ const out=[];
+ for(const f of r.files||[]){
+  let kind='other',where='in a Drive folder',pid=f.parents&&f.parents[0];
+  if(pid){try{const p=await(await dfetch(`${API}/files/${pid}?fields=${encodeURIComponent('id,name,parents')}`)).json();
+    if(!p.parents||!p.parents.length){if(p.name==='My Drive'||pid===MYDRIVE_ROOT){kind='my';where='in My Drive';}else{kind='pc';where='synced from computer '+p.name;}}
+    else where='in '+p.name;}catch{}}
+  out.push({id:f.id,kind,where});
+ }
+ out.sort((a,b)=>(a.kind==='pc'?0:1)-(b.kind==='pc'?0:1));
+ roots=out;
+ const sel=$d('raDriveRoot');if(sel)sel.innerHTML=roots.map(x=>`<option value="${esc(x.id)}">Horse_Racing ${esc(x.where)}</option>`).join('');
+ if(!roots.some(x=>x.id===rootId)){rootId=roots.length?roots[0].id:ROOT_ID;}
+ if(autopick&&!LS('trackAttack.drive.root')){
+  for(const x of roots.filter(x=>x.kind==='pc')){
+   if(await findChild(x.id,'04_Track_Profiles',true)){rootId=x.id;LSS('trackAttack.drive.root',rootId);break;}
+  }
+ }
+ if(sel)sel.value=rootId;
+ const n=$d('raDriveRootNote');if(n)n.textContent='Using: '+rootLabel();
+}
+const MYDRIVE_ROOT='0AEtyucqvzj8bUk9PVA';
 /* ---------- open a race file (.DRF/.csv/PDF) straight from Drive ---------- */
 const OPEN_EXT=/\.(pdf|drf|csv|txt|dat)$/i;
 const br={stack:[],items:[],next:null,filter:'',loading:false,err:''};
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const fmtSize=n=>{n=Number(n)||0;return n>=1048576?(n/1048576).toFixed(1)+' MB':Math.max(1,Math.round(n/1024))+' KB';};
-function brReset(){br.stack=[{id:ROOT_ID,name:'Horse_Racing'}];br.items=[];br.next=null;br.filter='';br.err='';brLoad(false);}
+function brReset(){br.stack=[{id:rootId,name:'Horse_Racing'}];br.items=[];br.next=null;br.filter='';br.err='';brLoad(false);}
 async function brLoad(more){
  if(br.loading)return;br.loading=true;br.err='';brRender();
  try{
