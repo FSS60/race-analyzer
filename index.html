@@ -1024,8 +1024,9 @@ function status(){
  const conn=wantOn&&haveToken();
  $d('raDriveConnect').textContent=wantOn&&!haveToken()?'Reconnect':'Connect Google Drive';
  $d('raDriveConnect').hidden=conn;
- for(const id of ['raDriveSave','raDrivePull','raDriveRestore','raDriveOff'])$d(id).hidden=!wantOn;
- for(const id of ['raDriveSave','raDrivePull','raDriveRestore'])$d(id).disabled=!conn||busy;
+ for(const id of ['raDriveOpen','raDriveSave','raDrivePull','raDriveRestore','raDriveOff'])$d(id).hidden=!wantOn;
+ for(const id of ['raDriveOpen','raDriveSave','raDrivePull','raDriveRestore'])$d(id).disabled=!conn||busy;
+ if(!conn&&$d('raDriveBrowser')&&!$d('raDriveBrowser').hidden)$d('raDriveBrowser').hidden=true;
  $d('raDriveIdRow').hidden=!!clientId&&wantOn;
 }
 async function run(label,fn){
@@ -1048,11 +1049,13 @@ function install(){
  const host=document.createElement('section');host.id='raDrive';host.className='panel';
  host.innerHTML=`<h3>Google Drive</h3>
   <p id="raDriveStatus" class="small" role="status"></p>
-  <div class="toolbar"><button id="raDriveConnect">Connect Google Drive</button><button id="raDriveSave" hidden>Save to Drive now</button><button id="raDrivePull" hidden>Load profiles &amp; results from Drive</button><button id="raDriveRestore" hidden>Restore latest autosave from Drive</button><button id="raDriveOff" hidden>Disconnect</button></div>
+  <div class="toolbar"><button id="raDriveConnect">Connect Google Drive</button><button id="raDriveOpen" class="primary" hidden>Open race file from Drive</button><button id="raDriveSave" hidden>Save to Drive now</button><button id="raDrivePull" hidden>Load profiles &amp; results from Drive</button><button id="raDriveRestore" hidden>Restore latest autosave from Drive</button><button id="raDriveOff" hidden>Disconnect</button></div>
+  <div id="raDriveBrowser" hidden style="margin:8px 0;padding:8px;border:1px solid #8886;border-radius:6px"></div>
   <div id="raDriveIdRow" class="small"><label>Google client ID <input id="raDriveClientId" type="text" size="48" placeholder="123456789-abc….apps.googleusercontent.com" autocomplete="off" spellcheck="false"></label></div>`;
  const bar=$d('raBar');(bar?bar.after(host):document.querySelector('main').prepend(host));
  $d('raDriveClientId').value=clientId;
  $d('raDriveConnect').onclick=connect;
+ $d('raDriveOpen').onclick=()=>{const b=$d('raDriveBrowser');if(!b.hidden){b.hidden=true;return;}b.hidden=false;brReset();};
  $d('raDriveSave').onclick=()=>run('Saving',async()=>{await saveSession();await saveJournal();return 'Saved to Drive.';});
  $d('raDrivePull').onclick=()=>run('Loading',async()=>{const o=await pullInputs(true);return o.join('; ')+'.';});
  let armed=0;
@@ -1073,6 +1076,61 @@ document.addEventListener('visibilitychange',()=>{
  if(document.visibilityState!=='visible'||!wantOn||busy)return;
  if(haveToken())run('Checking Drive',async()=>{const o=await pullInputs(false);return o.length?o.join('; ')+'.':'';});
 });
+/* ---------- open a race file (.DRF/.csv/PDF) straight from Drive ---------- */
+const OPEN_EXT=/\.(pdf|drf|csv|txt|dat)$/i;
+const br={stack:[],items:[],next:null,filter:'',loading:false,err:''};
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fmtSize=n=>{n=Number(n)||0;return n>=1048576?(n/1048576).toFixed(1)+' MB':Math.max(1,Math.round(n/1024))+' KB';};
+function brReset(){br.stack=[{id:ROOT_ID,name:'Horse_Racing'}];br.items=[];br.next=null;br.filter='';br.err='';brLoad(false);}
+async function brLoad(more){
+ if(br.loading)return;br.loading=true;br.err='';brRender();
+ try{
+  const cur=br.stack[br.stack.length-1];
+  const q=`'${cur.id}' in parents and trashed=false`;
+  let url=`${API}/files?q=${encodeURIComponent(q)}&orderBy=${encodeURIComponent('folder,modifiedTime desc')}&pageSize=200&fields=${encodeURIComponent('nextPageToken,files(id,name,mimeType,modifiedTime,size)')}`;
+  if(more&&br.next)url+='&pageToken='+encodeURIComponent(br.next);
+  const r=await(await dfetch(url)).json();
+  const got=(r.files||[]).filter(f=>f.mimeType===FOLDER_MIME||OPEN_EXT.test(f.name));
+  br.items=more?br.items.concat(got):got;br.next=r.nextPageToken||null;
+ }catch(e){br.err=e.message;}
+ br.loading=false;brRender();
+}
+const FOLDER_MIME='application/vnd.google-apps.folder';
+function brRender(){
+ const box=$d('raDriveBrowser');if(!box||box.hidden)return;
+ const crumbs=br.stack.map((s,i)=>`<button data-crumb="${i}" ${i===br.stack.length-1?'disabled':''}>${esc(s.name)}</button>`).join(' › ');
+ const q=br.filter.trim().toLowerCase(),items=br.items.filter(f=>!q||f.name.toLowerCase().includes(q));
+ const rows=items.map(f=>{
+  if(f.mimeType===FOLDER_MIME)return `<div style="padding:6px 0"><button data-dir="${esc(f.id)}" data-name="${esc(f.name)}" style="min-height:40px">📁 ${esc(f.name)}</button></div>`;
+  const pdf=/\.pdf$/i.test(f.name),when=(f.modifiedTime||'').slice(0,10);
+  return `<div style="padding:6px 0;display:flex;flex-wrap:wrap;gap:6px;align-items:center"><span style="flex:1 1 180px;min-width:0;overflow-wrap:anywhere">${esc(f.name)} <span class="small">${fmtSize(f.size)} · ${esc(when)}</span></span>`+
+   (pdf?`<button data-open="${esc(f.id)}" data-name="${esc(f.name)}" data-to="pdfFile" style="min-height:40px">Load as PP PDF</button><button data-open="${esc(f.id)}" data-name="${esc(f.name)}" data-to="mainPdfFile" style="min-height:40px">Attach to view</button>`
+        :`<button data-open="${esc(f.id)}" data-name="${esc(f.name)}" data-to="file" class="primary" style="min-height:40px">Open</button>`)+`</div>`;}).join('');
+ box.innerHTML=`<div class="small" style="margin-bottom:6px">${crumbs}</div>
+  <div style="margin-bottom:6px"><input id="raDriveFilter" type="search" placeholder="Filter by name" value="${esc(br.filter)}" style="width:100%;max-width:320px;min-height:36px" autocomplete="off"></div>
+  ${br.err?`<p class="small">⚠ ${esc(br.err)}</p>`:''}
+  ${rows||(br.loading?'':'<p class="small">No folders or race files here.</p>')}
+  ${br.loading?'<p class="small">Loading…</p>':''}
+  ${br.next&&!br.loading?'<button id="raDriveMore">Show more</button>':''}
+  <div style="margin-top:6px"><button id="raDriveCloseBr">Close</button></div>`;
+ box.querySelectorAll('[data-crumb]').forEach(b=>b.onclick=()=>{br.stack=br.stack.slice(0,Number(b.dataset.crumb)+1);br.items=[];br.next=null;br.filter='';brLoad(false);});
+ box.querySelectorAll('[data-dir]').forEach(b=>b.onclick=()=>{br.stack.push({id:b.dataset.dir,name:b.dataset.name});br.items=[];br.next=null;br.filter='';brLoad(false);});
+ box.querySelectorAll('[data-open]').forEach(b=>b.onclick=()=>brOpen(b.dataset.open,b.dataset.name,b.dataset.to));
+ const fi=$d('raDriveFilter');if(fi){fi.oninput=()=>{br.filter=fi.value;const pos=fi.selectionStart;brRender();const n=$d('raDriveFilter');n.focus();try{n.setSelectionRange(pos,pos);}catch{}};}
+ const mo=$d('raDriveMore');if(mo)mo.onclick=()=>brLoad(true);
+ $d('raDriveCloseBr').onclick=()=>{box.hidden=true;};
+}
+async function brOpen(id,name,target){
+ await run('Downloading '+name,async()=>{
+  const blob=await(await dfetch(`${API}/files/${id}?alt=media`)).blob();
+  const file=new File([blob],name,{type:/\.pdf$/i.test(name)?'application/pdf':'text/plain'});
+  const inp=$d(target);if(!inp)throw new Error('This version of the app has no '+target+' input.');
+  const dt=new DataTransfer();dt.items.add(file);inp.files=dt.files;
+  $d('raDriveBrowser').hidden=true;
+  inp.dispatchEvent(new Event('change',{bubbles:true}));
+  return 'Opened '+name+' from Drive.';
+ });
+}
 install();
 setInterval(tick,3000);
 window.raDrive={status,pullInputs,saveSession,saveJournal,restoreSession,_test:{setToken(t){token=t;tokenExp=Date.now()+36e5;wantOn=true;clientId=clientId||'test';status();}}};
