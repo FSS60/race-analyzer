@@ -625,6 +625,14 @@ function parRateLine(p){
  return out;}
 function parSwitchNote(h,p){const n=[],fa=family(p.surface),ft=family(h.surface);if(fa!==ft&&fa!=='unknown'&&ft!=='unknown')n.push(`*${fa} to ${ft}`);if(route(p.distance)!==route(h.distance))n.push(route(h.distance)?'*sprint to route':'*route to sprint');return n;}
 /* Fred's form window: last 3 lines; same surface + sprint/route, closest distance, most recent; skip bad races (trouble, beaten >6L sprint / >8L route) */
+function parProjectRated(rated, today) {
+  if (!rated || !today?.t) return null;
+  const t = today.t;
+  const project = (rating, par) => Number.isFinite(rating) && Number.isFinite(par)
+    ? par - (rating - 100) * 0.2 : null;
+  return { e1: project(rated.e1, t[0]), e2: project(rated.e2, t[1]),
+    final: project(rated.final, t[2]), raceE2: project(rated.raceE2, t[1]) };
+}
 function parHorse(h,today){
  const lines=[...(h.pp||[])].sort((a,b)=>a.slot-b.slot).slice(0,3),rated=lines.map(parRateLine).filter(Boolean);
  const res={h,rated,pick:null,notes:[],classMove:null,fast:null,proj:null};
@@ -637,8 +645,7 @@ function parHorse(h,today){
  const L1=rated.find(r=>r.p.slot===1)||rated[0];
  if(today&&today.cls&&L1&&Number.isFinite(L1.level)){const d=today.cls.level-L1.level;res.classMove={d,text:Math.abs(d)<.5?'Same level':(d>0?'Up ':'Down ')+Math.abs(d).toFixed(1),from:L1};}
  if(today&&today.cls){const n=rOK.filter(r=>r.final>=today.cls.level).length;res.fast={n,of:rOK.length,text:rOK.length?`${n} of ${rOK.length} at/above par`:'No rated lines'};}
- if(today&&today.t&&res.pick){const pk=res.pick,t=today.t,pj=(rt,par)=>Number.isFinite(rt)&&Number.isFinite(par)?par-(rt-100)*.2:null;
-  res.proj={e1:pj(pk.e1,t[0]),e2:pj(pk.e2,t[1]),final:pj(pk.final,t[2]),raceE2:pj(pk.raceE2,t[1])};}
+ res.proj=parProjectRated(res.pick,today);
  return res;}
 function parRace(hs){const h0=hs[0];if(!h0)return null;const today=parToday(h0);const rows=hs.map(h=>parHorse(h,today));return {today,rows,by:new Map(rows.map(r=>[hid(r.h),r]))};}
 function parLineText(r){if(!r)return '';const p=r.p,dd=Number.isFinite(days(r.h?.day||'',p.date))?'':'';return `L${p.slot} ${date(p.date)} ${p.track} ${p.about?'abt ':''}${fmt(p.distance,p.distance%1?1:0)}f ${p.surface}`;}
@@ -1504,28 +1511,99 @@ function ppName(s){return String(s||'').toLowerCase().replace(/(^|[\s\-.(])([a-z
 function ppAge(code){const c=String(code||'').toUpperCase(),a={A:'2',B:'3',C:'4',D:'5',E:'3-4',F:'4-5',G:'3-5',H:''}[c[0]];return a===undefined||a===''?'':a+(c[1]==='U'?'↑':'');}
 function ppCall(pos,m){if(!Number.isFinite(pos)||pos<=0)return '';const g=ppMargin(m);return esc(pos)+(g?'<sup>'+esc(g)+'</sup>':'');}
 function ppRec(r,label){if(!r||!Number.isFinite(r.starts))return '';return `${label} ${r.starts}: ${r.w??0}-${r.p??0}-${r.s??0}${Number.isFinite(r.earn)?' $'+Math.round(r.earn).toLocaleString('en-US'):''}`;}
-function ppLine(p,full){const x=p.x||{},pace=(x.pace||[]).filter(Number.isFinite),e1=pace.length>1?pace.at(-2):pace[0],e2=pace.length>1?pace.at(-1):null,late=x.late??p.late;
+function ppLine(p,full,parText=''){const x=p.x||{},pace=(x.pace||[]).filter(Number.isFinite),e1=pace.length>1?pace.at(-2):pace[0],e2=pace.length>1?pace.at(-1):null,late=x.late??p.late;
  const fr=(x.fr||[p.t2,p.t4,p.t6]).filter(t=>Number.isFinite(t)&&t>0),fin=ppTime(p.final),med={1:'L',2:'B',3:'BL'}[x.med]||'',sh=n=>Number.isFinite(n)?(n>0?'+':'')+n:'';
  const cls=[ppAge(x.ageSex),(x.statebred?'s':'')+(p.class||p.abbrev||''),x.claimed==='c'?'(clmd)':''].filter(Boolean).join(' ');
  const top=(x.top||[]).filter(t=>t.name).map(t=>`${esc(ppName(t.name))}${Number.isFinite(t.wt)?'<sup>'+t.wt+'</sup>':''} ${esc(ppMargin(t.mgn))}`).join(' ');
  const comment=full&&p.comment?p.comment:(x.trip||p.comment||'');
- return `<tr><td>${esc(ppDate(p.date))}${esc(p.track||'')}${Number.isFinite(x.raceNo)?'<sup>'+x.raceNo+'</sup>':''}${Number.isFinite(x.days)?' <span class="pp-days">'+x.days+'</span>':''}</td><td>${esc(ppDist(p))} ${esc(ppSurf(p))} ${esc(String(p.condition||'').toLowerCase())}</td><td class="pp-fr">${fr.map(t=>esc(ppTime(t))).join(' ')}${fin?' <b>'+esc(fin)+'</b>':''}</td><td title="${esc(x.raceName||'')}">${esc(cls)}</td><td>${[e1,e2].map(n=>Number.isFinite(n)?n:'').join(' ')}/ ${Number.isFinite(late)?late:''}</td><td class="pp-sh">${sh(x.shape1)} ${sh(p.raceShape2)}</td><td class="pp-spd">${Number.isFinite(p.speed)?p.speed:''}</td><td>${Number.isFinite(x.post)?x.post:''}</td><td>${Number.isFinite(x.start)?x.start:''}</td><td>${ppCall(p.first,x.m1??p.bl1)}</td><td>${ppCall(p.second,x.m2??p.bl2)}</td><td>${ppCall(x.str,x.mS)}</td><td class="pp-fin">${ppCall(p.finish,x.mF??p.blf)}</td><td>${esc(ppPerson(x.jockey))}${Number.isFinite(x.wt)?'<sup>'+x.wt+'</sup>':''}</td><td>${esc(med)}${esc(x.equip||'')}</td><td>${Number.isFinite(x.odds)?(x.fav?'*':'')+x.odds.toFixed(2):''}</td><td class="pp-top">${top}</td><td class="pp-cm">${esc(comment)}</td><td>${Number.isFinite(x.field)?x.field:''}</td></tr>`;}
+ return `<tr><td>${esc(ppDate(p.date))}${esc(p.track||'')}${Number.isFinite(x.raceNo)?'<sup>'+x.raceNo+'</sup>':''}${Number.isFinite(x.days)?' <span class="pp-days">'+x.days+'</span>':''}</td><td>${esc(ppDist(p))} ${esc(ppSurf(p))} ${esc(String(p.condition||'').toLowerCase())}</td><td class="pp-fr">${fr.map(t=>esc(ppTime(t))).join(' ')}${fin?' <b>'+esc(fin)+'</b>':''}${parText?'<span class="pp-par"><b>Adj</b> '+esc(parText)+'</span>':''}</td><td title="${esc(x.raceName||'')}">${esc(cls)}</td><td>${[e1,e2].map(n=>Number.isFinite(n)?n:'').join(' ')}/ ${Number.isFinite(late)?late:''}</td><td class="pp-sh">${sh(x.shape1)} ${sh(p.raceShape2)}</td><td class="pp-spd">${Number.isFinite(p.speed)?p.speed:''}</td><td>${Number.isFinite(x.post)?x.post:''}</td><td>${Number.isFinite(x.start)?x.start:''}</td><td>${ppCall(p.first,x.m1??p.bl1)}</td><td>${ppCall(p.second,x.m2??p.bl2)}</td><td>${ppCall(x.str,x.mS)}</td><td class="pp-fin">${ppCall(p.finish,x.mF??p.blf)}</td><td>${esc(ppPerson(x.jockey))}${Number.isFinite(x.wt)?'<sup>'+x.wt+'</sup>':''}</td><td>${esc(med)}${esc(x.equip||'')}</td><td>${Number.isFinite(x.odds)?(x.fav?'*':'')+x.odds.toFixed(2):''}</td><td class="pp-top">${top}</td><td class="pp-cm">${esc(comment)}</td><td>${Number.isFinite(x.field)?x.field:''}</td></tr>`;}
 function ppWorks(c){return (c?.works||[]).slice(0,8).map(w=>`<span class="pp-wk">${w.rank===1||w.time<0?'● ':''}${esc(ppDate(w.date,false))} ${esc(w.track)}${w.tt?' tr.t':''} ${esc(Number.isFinite(w.yards)?ppFrac(Math.abs(w.yards)/220)+'f':'')} ${esc(String(w.cond||'').toLowerCase())} ${esc(ppTime(Math.abs(w.time)))} ${esc(w.how)}${Number.isFinite(w.rank)&&Number.isFinite(w.of)?' '+w.rank+'/'+w.of:''}</span>`).join(' ');}
-function ppHorse(h,full){const c=h.card,sexes={G:'g',C:'c',F:'f',M:'m',H:'h',R:'rig'},yr=Number(String(h.day||'').slice(0,4)),age=c&&Number.isFinite(c.yob)&&yr?yr-(2000+c.yob):null,id=hid(h);
+function ppProgramParText(horse, line, today) {
+  if (!today?.t || family(line.surface) === 'unknown' ||
+      family(line.surface) !== family(horse.surface) ||
+      !(line.distance > 0) || route(line.distance) !== route(horse.distance)) return '';
+  const projected = parProjectRated(parRateLine(line), today);
+  if (!projected) return '';
+  const times = [projected.e1, projected.e2, projected.final];
+  return times.some(Number.isFinite)
+    ? times.map(time => Number.isFinite(time) ? parFmtTime(time) : '—').join(' / ')
+    : '';
+}
+function ppHorse(h,full,programLines=0,programPar=null){const c=h.card,sexes={G:'g',C:'c',F:'f',M:'m',H:'h',R:'rig'},yr=Number(String(h.day||'').slice(0,4)),age=c&&Number.isFinite(c.yob)&&yr?yr-(2000+c.yob):null,id=hid(h);
  const mlD=[1,2,5,10].find(d=>Math.abs(h.ml*d-Math.round(h.ml*d))<.01),ml=Number.isFinite(h.ml)?(mlD?Math.round(h.ml*mlD)+'-'+mlD:h.ml.toFixed(1)+'-1'):'';
- const head=`<div class="pp-head"><span class="pp-pgm">${esc(h.program)}</span> <b class="pp-name">${esc(h.name)}</b> <span class="small">(${esc(h.brisStyle||'')} ${esc(h.quirin??'')})</span>${ml?' · ML '+esc(ml):''}${Number.isFinite(h.prime)?' · Prime Power '+h.prime.toFixed(1):''}${scratched(h)?' · <b class="warn">Scratched</b>':''}</div>`;
+ const programHead=`<div class="pp-head"><span class="pp-pgm">${esc(h.program)}</span> <b class="pp-name">${esc(h.name)}</b>`;
+ const head=`${programHead} <span class="small">(${esc(h.brisStyle||'')} ${esc(h.quirin??'')})</span>${ml?' · ML '+esc(ml):''}${Number.isFinite(h.prime)?' · Prime Power '+h.prime.toFixed(1):''}${scratched(h)?' · <b class="warn">Scratched</b>':''}</div>`;
  const info=c?`<div class="small">${esc([c.color,sexes[c.sex]||c.sex,age].filter(Boolean).join(' '))}${c.sire?' · '+esc(ppName(c.sire))+(c.dam?' – '+esc(ppName(c.dam)):'')+(c.damSire?' by '+esc(ppName(c.damSire)):''):''}${c.bred?' · Bred '+esc(c.bred):''}${c.owner?' · Own: '+esc(ppName(c.owner)):''}</div>`:'';
  const conn=`<div class="small">Trainer ${esc(ppName(h.trainer))} · Jockey ${esc(ppName(h.jockey))}${c&&Number.isFinite(c.wt)?' · '+c.wt+' lb':''}</div>`;
  const rec=c?`<div class="small">${[ppRec(c.life,'Life'),ppRec(c.cur,c.cur.year),ppRec(c.prev,c.prev.year)].filter(Boolean).map(esc).join(' · ')}</div>`:(Number.isFinite(h.lifeStarts)?`<div class="small">Life ${h.lifeStarts} starts, ${h.lifeWins??0} wins</div>`:'');
- const lines=[...h.pp].sort((a,b)=>a.slot-b.slot);
- const table=lines.length?`<div class="scroll"><table class="pp-tab"><thead><tr><th>Date Trk</th><th>Dist</th><th>Fractions / final</th><th>Race type</th><th>E1 E2/ LP</th><th>1c 2c</th><th>SPD</th><th>PP</th><th>St</th><th>1C</th><th>2C</th><th>Str</th><th>Fin</th><th>Jockey</th><th>Med</th><th>Odds</th><th>Top finishers</th><th>Comment</th><th>#</th></tr></thead><tbody>${lines.map(p=>ppLine(p,full)).join('')}</tbody></table></div>`:'<p class="small">No past races (first-time starter).</p>';
+ const ordered=[...h.pp].sort((a,b)=>a.slot-b.slot);
+ const lines=programLines?ordered.slice(0,programLines):ordered;
+ const table=lines.length?`<div class="scroll"><table class="pp-tab"><thead><tr><th>Date Trk</th><th>Dist</th><th>Fractions / final</th><th>Race type</th><th>E1 E2/ LP</th><th>1c 2c</th><th>SPD</th><th>PP</th><th>St</th><th>1C</th><th>2C</th><th>Str</th><th>Fin</th><th>Jockey</th><th>Med</th><th>Odds</th><th>Top finishers</th><th>Comment</th><th>#</th></tr></thead><tbody>${lines.map(p=>ppLine(p,full,programPar?ppProgramParText(h,p,programPar):'')).join('')}</tbody></table></div>`:'<p class="small">No past races (first-time starter).</p>';
  const works=c?.works?.length?`<div class="small pp-works"><b>Workouts:</b> ${ppWorks(c)}</div>`:'';
- return `<div class="pp-horse${id===selected?' pp-sel':''}${scratched(h)?' pp-scr':''}" data-hid="${esc(id)}">${head}${info}${conn}${rec}${table}${works}</div>`;}
-let ppView='race',ppFull=false;
+ return `<div class="pp-horse${id===selected?' pp-sel':''}${scratched(h)?' pp-scr':''}" data-hid="${esc(id)}">${programLines?programHead+(scratched(h)?' · Scratched':'')+'</div>':head+info+conn+rec}${table}${programLines?'':works}</div>`;}
+function ppProgramDocument(hs, count) {
+  const race = hs[0];
+  const today = parToday(race);
+  const title = race.track + ' · ' + date(race.day) + ' · Race ' + race.race;
+  const conditions = [
+    Number.isFinite(race.distance) && race.distance > 0 ? race.distance + 'f' : '',
+    race.surface,
+    raRaceType(race)
+  ].filter(Boolean).join(' · ');
+  const ordered = [...hs].sort((a, b) => a.program.localeCompare(b.program, undefined, { numeric: true }));
+  const css = document.getElementById('pp-style').textContent;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<title>Race program · ${esc(title)}</title><style>
+${css}
+@page { size: letter landscape; margin: 0.38in; }
+* { box-sizing: border-box; }
+body { max-width: 10.24in; margin: 12px auto; padding: 0 8px;
+  color: #111; background: #fff; font: 9pt/1.3 system-ui, sans-serif; }
+h1 { font-size: 16pt; margin: 0; }
+header p { margin: 2px 0 3px; }
+.pp-key { font-size: 7.5pt; margin: 0 0 6px; }
+button { margin: 0 0 8px; }
+.pp-horse { border: 0; border-top: 1px solid #999; border-radius: 0; margin: 0 0 6px;
+  padding: 4px 0 0; break-inside: avoid; color: #111; background: #fff; opacity: 1; }
+.pp-head { margin-bottom: 2px; font-size: 10pt; }
+.pp-pgm { color: #111; background: #fff; border: 1px solid #777; }
+.pp-scr .pp-head, .pp-scr .pp-head b { color: #666; font-weight: 400; }
+.scroll { overflow: visible; }
+.pp-tab { width: 100%; min-width: 0; table-layout: auto; font-size: 7.2pt; }
+.pp-tab :is(th, td) { white-space: normal; padding: 2px 3px; color: #111; vertical-align: top; }
+.pp-tab :is(.pp-top, .pp-cm) { max-width: 1.6in; overflow-wrap: anywhere; }
+.pp-tab :is(th, td):nth-child(-n+6) { min-width: 2.5em; }
+.pp-tab th { border-bottom: 1px solid #888; }
+.pp-par { display: block; color: #333; font-size: 6.9pt; }
+.pp-tab tr { break-inside: avoid; }
+@media print { body { max-width: none; margin: 0; padding: 0; } button { display: none; } }
+</style></head><body><button type="button" onclick="window.print()">Print</button>
+<header><h1>${esc(title)}</h1><p>${esc(conditions)} · Most recent ${count} running lines${demo ? ' · Synthetic demo' : ''}</p></header>
+<p class="pp-key">Adj = estimated first call / second call / finish at today’s track and distance. Shown where comparable and supported by pars.</p>
+${ordered.map(horse => ppHorse(horse, true, count, today)).join('')}
+</body></html>`;
+}
+function ppPrintProgram(hs, count) {
+  const html = ppProgramDocument(hs, count);
+  const preview = window.open('', '_blank');
+  if (!preview) {
+    download('Race_Program.html', html, 'text/html');
+    return;
+  }
+  preview.opener = null;
+  preview.document.open();
+  preview.document.write(html);
+  preview.document.close();
+  preview.focus();
+}
+let ppView='race',ppFull=false,ppProgramLines=3;
 function drfPPRender(hs){const host=$('drfPP');if(!host)return;if(!hs?.length){host.innerHTML='';return;}
  const built=hs.some(h=>h.card||h.pp.some(p=>p.x)),list=ppView==='horse'&&selected?hs.filter(h=>hid(h)===selected):hs,show=list.length?list:hs;
- host.innerHTML=`<div class="toolbar"><label>Show <select id="ppView"><option value="race">Whole race</option><option value="horse">Selected horse only</option></select></label><label><input id="ppFull" type="checkbox"${ppFull?' checked':''}> Full trip comments</label><button id="ppPrint">Print these PPs</button></div><p class="small">${built?'Built from the BRISNET DRF single file. Newest race first. Superscripts are lengths (behind, or ahead when first); ● marks a bullet workout.':'This card did not come from a DRF single file, so only the basic running-line values are shown. Open the .DRF file for full past performances.'}</p>${[...show].sort((a,b)=>(Number(a.program.match(/\d+/)?.[0])||0)-(Number(b.program.match(/\d+/)?.[0])||0)||a.program.localeCompare(b.program)).map(h=>ppHorse(h,ppFull)).join('')}`;
+ host.innerHTML=`<div class="toolbar"><label>Show <select id="ppView"><option value="race">Whole race</option><option value="horse">Selected horse only</option></select></label><label><input id="ppFull" type="checkbox"${ppFull?' checked':''}> Full trip comments</label><button id="ppPrint">Print these PPs</button><label>Program lines <select id="ppProgramLines"><option value="3">3</option><option value="4">4</option></select></label><button id="ppPrintProgram" type="button">Print race program</button></div><p class="small">${built?'Built from the BRISNET DRF single file. Newest race first. Superscripts are lengths (behind, or ahead when first); ● marks a bullet workout.':'This card did not come from a DRF single file, so only the basic running-line values are shown. Open the .DRF file for full past performances.'}</p>${[...show].sort((a,b)=>(Number(a.program.match(/\d+/)?.[0])||0)-(Number(b.program.match(/\d+/)?.[0])||0)||a.program.localeCompare(b.program)).map(h=>ppHorse(h,ppFull)).join('')}`;
  $('ppView').value=ppView;$('ppView').onchange=e=>{ppView=e.target.value;drfPPRender(hs);};$('ppFull').onchange=e=>{ppFull=e.target.checked;drfPPRender(hs);};
+ $('ppProgramLines').value=String(ppProgramLines);
+ $('ppProgramLines').onchange=e=>{ppProgramLines=e.target.value==='3'?3:4;};
+ $('ppPrintProgram').onclick=()=>ppPrintProgram(hs,ppProgramLines);
  $('ppPrint').onclick=()=>{const w=window.open('','_blank');if(!w){alert('Allow a new tab to print.');return;}const css=document.getElementById('pp-style').textContent;w.document.write(`<!doctype html><title>Past performances ${esc(raceKey)}</title><style>body{font:12px system-ui,sans-serif;color:#000;background:#fff;margin:12px}${css}.pp-horse{border-color:#999;background:#fff;color:#000}.pp-tab th{color:#333}.small{color:#222}</style>${[...host.querySelectorAll('.pp-horse')].map(d=>d.outerHTML).join('')}`);w.document.close();w.focus();w.print();};
  host.querySelectorAll('.pp-name').forEach(n=>{n.style.cursor='pointer';n.onclick=()=>{const id=n.closest('.pp-horse').dataset.hid;selected=id;render();};});}
 function drfPPScroll(id){const el=[...document.querySelectorAll('#drfPP .pp-horse')].find(d=>d.dataset.hid===id);if(el){el.scrollIntoView({behavior:'smooth',block:'start'});return true;}return false;}
@@ -1821,7 +1899,7 @@ const root=document.documentElement
 const setTheme=t=>{root.dataset.theme=t;const b=$m('mTheme');if(b){b.textContent=t==='light'?'Dark':'Light';b.title='Switch to '+b.textContent.toLowerCase()+' theme'}}
 setTheme(LSg('ra.theme')==='light'?'light':'dark')
 
-const ver=typeof RA_VERSION!=='undefined'?'v'+RA_VERSION:''
+const ver='A1 v1.1'+(typeof RA_VERSION!=='undefined'?' · model v'+RA_VERSION:'')
 const bar=document.createElement('div');bar.id='mBar'
 bar.innerHTML=`<div class="m-in"><div class="m-brand"><span class="m-logo">RA</span><b>Race Analyzer</b><span class="m-ver">${ver}</span></div><div class="m-races" id="mRaces" role="tablist" aria-label="Races"><span class="m-empty">Open a card to begin</span></div><div class="m-actions"><span class="m-save" id="mSave" title=""><i></i><span></span></span><button id="mSaveNow" type="button">Save backup</button><button id="mTheme" type="button"></button></div></div><nav class="m-nav" id="mNav" aria-label="Sections"></nav>`
 document.body.prepend(bar)
